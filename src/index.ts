@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AttachClient } from "./attach-client.js";
+import { isError, parseArgs } from "./cli-parser.js";
 import { parseKeyInput } from "./key-parser.js";
 import { runMCPServer } from "./mcp-server.js";
 import type { StartArgs } from "./messages.js";
@@ -93,17 +94,40 @@ For more information: https://github.com/badlogic/terminalcp`);
 	process.exit(0);
 }
 
-// Check if running in MCP server mode
-if (args[0] === "--mcp") {
-	// MCP server mode
-	runMCPServer().catch((error) => {
-		console.error("Fatal error:", error);
-		process.exit(1);
-	});
-} else if (args.length > 0) {
-	if (args[0] === "ls" || args[0] === "list") {
-		const client = new TerminalClient();
-		client
+// Parse command line arguments
+const parsed = parseArgs(args);
+
+if (isError(parsed)) {
+	console.error(parsed.error);
+	if (parsed.usage) {
+		console.error(parsed.usage);
+	}
+	process.exit(1);
+}
+
+const { command, args: cmdArgs, flags } = parsed;
+
+// Execute the parsed command
+switch (command) {
+	case "mcp":
+		runMCPServer().catch((error) => {
+			console.error("Fatal error:", error);
+			process.exit(1);
+		});
+		break;
+
+	case "server": {
+		const server = new TerminalServer();
+		server.start().catch((err) => {
+			console.error("Failed to start server:", err);
+			process.exit(1);
+		});
+		break;
+	}
+
+	case "list": {
+		const listClient = new TerminalClient();
+		listClient
 			.request({ action: "list" })
 			.then((response) => {
 				const lines = response.split("\n").filter((line: string) => line.trim());
@@ -131,43 +155,21 @@ if (args[0] === "--mcp") {
 				console.error(err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "start") {
-		// Parse arguments, looking for --cwd option
-		const remainingArgs = args.slice(1); // Remove 'start'
-		let sessionId: string | undefined;
-		let cwd: string | undefined;
-		const commandArgs: string[] = [];
+		break;
+	}
 
-		for (let i = 0; i < remainingArgs.length; i++) {
-			const arg = remainingArgs[i];
-			if (arg === "--cwd") {
-				if (i + 1 >= remainingArgs.length) {
-					console.error("Error: --cwd requires a directory path");
-					process.exit(1);
-				}
-				cwd = remainingArgs[i + 1];
-				i++; // Skip the next argument since it's the cwd value
-			} else if (!sessionId) {
-				sessionId = arg;
-			} else {
-				commandArgs.push(arg);
-			}
+	case "start": {
+		const startClient = new TerminalClient();
+		const request: StartArgs = {
+			action: "start",
+			command: cmdArgs.command,
+			name: cmdArgs.sessionId,
+		};
+		if (flags.cwd) {
+			request.cwd = flags.cwd as string;
 		}
 
-		if (!sessionId || commandArgs.length === 0) {
-			console.error("Usage: terminalcp start <session-id> <command> [args...] [--cwd <directory>]");
-			process.exit(1);
-		}
-
-		const command = commandArgs.join(" ");
-
-		const client = new TerminalClient();
-		const request: StartArgs = { action: "start", command, name: sessionId };
-		if (cwd) {
-			request.cwd = cwd;
-		}
-
-		client
+		startClient
 			.request(request)
 			.then((id) => {
 				console.log(`Started session: ${id}`);
@@ -177,11 +179,13 @@ if (args[0] === "--mcp") {
 				console.error("Failed to start session:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "stop") {
-		const sessionId = args[1]; // Optional
-		const client = new TerminalClient();
-		client
-			.request({ action: "stop", id: sessionId })
+		break;
+	}
+
+	case "stop": {
+		const stopClient = new TerminalClient();
+		stopClient
+			.request({ action: "stop", id: cmdArgs.sessionId })
 			.then((result) => {
 				console.log(result);
 				process.exit(0);
@@ -190,62 +194,51 @@ if (args[0] === "--mcp") {
 				console.error("Failed to stop session:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "stdout") {
-		if (!args[1]) {
-			console.error("Usage: terminalcp stdout <id> [lines]");
-			process.exit(1);
-		}
-		const client = new TerminalClient();
-		const lines = args[2] ? parseInt(args[2]) : undefined;
-		client
-			.request({ action: "stdout", id: args[1], lines })
+		break;
+	}
+
+	case "stdout": {
+		const stdoutClient = new TerminalClient();
+		stdoutClient
+			.request({ action: "stdout", id: cmdArgs.sessionId, lines: cmdArgs.lines })
 			.then((output) => {
-				process.stdout.write(output);
+				process.stdout.write(output as string);
 				process.exit(0);
 			})
 			.catch((err) => {
 				console.error("Failed to get stdout:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "stream") {
-		if (!args[1]) {
-			console.error("Usage: terminalcp stream <id> [--since-last] [--with-ansi]");
-			process.exit(1);
-		}
-		const client = new TerminalClient();
-		const since_last = args.includes("--since-last");
-		const strip_ansi = !args.includes("--with-ansi");
-		client
-			.request({ action: "stream", id: args[1], since_last, strip_ansi })
+		break;
+	}
+
+	case "stream": {
+		const streamClient = new TerminalClient();
+		streamClient
+			.request({
+				action: "stream",
+				id: cmdArgs.sessionId,
+				since_last: !!flags.sinceLast,
+				strip_ansi: !flags.withAnsi,
+			})
 			.then((output) => {
-				process.stdout.write(output);
+				process.stdout.write(output as string);
 				process.exit(0);
 			})
 			.catch((err) => {
 				console.error("Failed to get stream:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "stdin") {
-		if (args.length < 3) {
-			console.error("Usage: terminalcp stdin <id> <text> [text] ...");
-			console.error("\nUse :: prefix for special keys:");
-			console.error('  terminalcp stdin session "hello world" ::Enter');
-			console.error("  terminalcp stdin session hello ::Space world ::Enter");
-			console.error('  terminalcp stdin session "echo test" ::Left ::Left ::Left "hi " ::Enter');
-			console.error('  terminalcp stdin session ::C-c "echo done" ::Enter');
-			console.error("\nSpecial keys: ::Up, ::Down, ::Left, ::Right, ::Enter, ::Tab, ::Space");
-			console.error("              ::Home, ::End, ::PageUp, ::PageDown, ::Insert, ::Delete");
-			console.error("              ::F1-F12, ::BSpace, ::C-<key>, ::M-<key>, ::^<key>");
-			process.exit(1);
-		}
-		const client = new TerminalClient();
-		const dataArgs = args.slice(2);
+		break;
+	}
 
+	case "stdin": {
+		const stdinClient = new TerminalClient();
 		// Parse the input using the key parser with :: prefix support
-		const data = parseKeyInput(dataArgs);
+		const data = parseKeyInput(cmdArgs.data);
 
-		client
-			.request({ action: "stdin", id: args[1], data })
+		stdinClient
+			.request({ action: "stdin", id: cmdArgs.sessionId, data })
 			.then(() => {
 				process.exit(0);
 			})
@@ -253,14 +246,13 @@ if (args[0] === "--mcp") {
 				console.error("Failed to send stdin:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "term-size") {
-		if (!args[1]) {
-			console.error("Usage: terminalcp term-size <id>");
-			process.exit(1);
-		}
-		const client = new TerminalClient();
-		client
-			.request({ action: "term-size", id: args[1] })
+		break;
+	}
+
+	case "term-size": {
+		const termSizeClient = new TerminalClient();
+		termSizeClient
+			.request({ action: "term-size", id: cmdArgs.sessionId })
 			.then((result) => {
 				console.log(result);
 				process.exit(0);
@@ -269,14 +261,13 @@ if (args[0] === "--mcp") {
 				console.error("Failed to get terminal size:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "resize") {
-		if (args.length < 4) {
-			console.error("Usage: terminalcp resize <id> <cols> <rows>");
-			process.exit(1);
-		}
-		const client = new TerminalClient();
-		client
-			.request({ action: "resize", id: args[1], cols: parseInt(args[2]), rows: parseInt(args[3]) })
+		break;
+	}
+
+	case "resize": {
+		const resizeClient = new TerminalClient();
+		resizeClient
+			.request({ action: "resize", id: cmdArgs.sessionId, cols: cmdArgs.cols, rows: cmdArgs.rows })
 			.then(() => {
 				console.log("Terminal resized");
 				process.exit(0);
@@ -285,19 +276,21 @@ if (args[0] === "--mcp") {
 				console.error("Failed to resize terminal:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "attach") {
-		if (!args[1]) {
-			console.error("Usage: terminalcp attach <id>");
-			process.exit(1);
-		}
-		const client = new AttachClient();
-		client.attach(args[1]).catch((err) => {
+		break;
+	}
+
+	case "attach": {
+		const attachClient = new AttachClient();
+		attachClient.attach(cmdArgs.sessionId).catch((err) => {
 			console.error(err.message);
 			process.exit(1);
 		});
-	} else if (args[0] === "version") {
-		const client = new TerminalClient();
-		client
+		break;
+	}
+
+	case "version": {
+		const versionClient = new TerminalClient();
+		versionClient
 			.request({ action: "version" })
 			.then((version) => {
 				console.log(`Server version: ${version}`);
@@ -309,15 +302,18 @@ if (args[0] === "--mcp") {
 				console.log(`Client version: ${CLIENT_VERSION}`);
 				process.exit(1);
 			});
-	} else if (args[0] === "kill-server") {
+		break;
+	}
+
+	case "kill-server": {
 		// Check if server is running first
 		const socketPath = path.join(os.homedir(), ".terminalcp", "server.sock");
 		if (!fs.existsSync(socketPath)) {
 			console.error("No server running");
 			process.exit(1);
 		}
-		const client = new TerminalClient();
-		client
+		const killClient = new TerminalClient();
+		killClient
 			.request({ action: "kill-server" })
 			.then(() => {
 				console.log("Server killed");
@@ -327,15 +323,6 @@ if (args[0] === "--mcp") {
 				console.error("Failed to kill server:", err.message);
 				process.exit(1);
 			});
-	} else if (args[0] === "--server") {
-		const server = new TerminalServer();
-		server.start().catch((err) => {
-			console.error("Failed to start server:", err);
-			process.exit(1);
-		});
-	} else {
-		console.error(`Unknown command: ${args[0]}`);
-		console.error("Run 'terminalcp' without arguments to see help");
-		process.exit(1);
+		break;
 	}
 }
