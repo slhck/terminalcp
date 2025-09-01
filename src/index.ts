@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { AttachClient } from "./attach-client.js";
 import { parseKeyInput } from "./key-parser.js";
 import { runMCPServer } from "./mcp-server.js";
+import type { StartArgs } from "./messages.js";
 import { TerminalClient } from "./terminal-client.js";
 import { TerminalServer } from "./terminal-server.js";
 
@@ -30,7 +31,7 @@ USAGE:
 
 COMMANDS:
   list, ls                               List all active sessions
-  start <id> <command>                   Start a new named session
+  start <id> <command> [--cwd <dir>]     Start a new named session
   stop [id]                              Stop session(s) (all if no id given)
   attach <id>                            Attach to a session interactively
   stdout <id> [lines]                    Get terminal output (rendered view)
@@ -47,6 +48,9 @@ EXAMPLES:
 
   # Start a development server
   terminalcp start dev-server "npm run dev"
+  
+  # Start a session in a specific directory
+  terminalcp start build "make" --cwd /path/to/project
 
   # Start an interactive Python session
   terminalcp start python "python3 -i"
@@ -72,6 +76,7 @@ OPTIONS:
   --server                               Run as terminal server daemon
   --since-last                           Only show new output (stream)
   --with-ansi                            Keep ANSI codes (stream)
+  --cwd <directory>                      Working directory for start command
 
 CLAUDE DESKTOP CONFIGURATION:
   Add to claude_desktop_config.json:
@@ -127,16 +132,43 @@ if (args[0] === "--mcp") {
 				process.exit(1);
 			});
 	} else if (args[0] === "start") {
-		if (args.length < 3) {
-			console.error("Usage: terminalcp start <session-id> <command> [args...]");
+		// Parse arguments, looking for --cwd option
+		const remainingArgs = args.slice(1); // Remove 'start'
+		let sessionId: string | undefined;
+		let cwd: string | undefined;
+		const commandArgs: string[] = [];
+
+		for (let i = 0; i < remainingArgs.length; i++) {
+			const arg = remainingArgs[i];
+			if (arg === "--cwd") {
+				if (i + 1 >= remainingArgs.length) {
+					console.error("Error: --cwd requires a directory path");
+					process.exit(1);
+				}
+				cwd = remainingArgs[i + 1];
+				i++; // Skip the next argument since it's the cwd value
+			} else if (!sessionId) {
+				sessionId = arg;
+			} else {
+				commandArgs.push(arg);
+			}
+		}
+
+		if (!sessionId || commandArgs.length === 0) {
+			console.error("Usage: terminalcp start <session-id> <command> [args...] [--cwd <directory>]");
 			process.exit(1);
 		}
-		const sessionId = args[1];
-		const command = args.slice(2).join(" ");
+
+		const command = commandArgs.join(" ");
 
 		const client = new TerminalClient();
+		const request: StartArgs = { action: "start", command, name: sessionId };
+		if (cwd) {
+			request.cwd = cwd;
+		}
+
 		client
-			.request({ action: "start", command, name: sessionId })
+			.request(request)
 			.then((id) => {
 				console.log(`Started session: ${id}`);
 				process.exit(0);
