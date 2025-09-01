@@ -13,7 +13,8 @@
 		"prepublishOnly": "npm run clean && npm run build",
 		"check": "biome check --write . && tsc --project tsconfig.check.json",
 		"prepare": "husky",
-		"test": "tsx --test --test-concurrency=1 test/**/*.test.ts"
+		"test": "tsx --test --test-concurrency=1 test/**/*.test.ts",
+		"install-global": "npm install -g ."
 	},
 	"files": [
 		"dist/**/*",
