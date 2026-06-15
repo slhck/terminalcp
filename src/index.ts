@@ -38,6 +38,7 @@ COMMANDS:
   stdout <id> [lines]                    Get terminal output (rendered view)
   stream <id> [opts]                     Get raw output stream
   stdin <id> <data>                      Send input to a session
+  run <id> <data> [opts]                 Send input and block until done, return new output
   resize <id> <cols> <rows>              Resize terminal dimensions
   term-size <id>                         Get terminal size
   version                                Show client and server versions
@@ -58,6 +59,13 @@ EXAMPLES:
   terminalcp stdin python "print('Hello')\r"
   terminalcp stdout python
 
+  # Run a remote shell command synchronously (returns when done, with exit code)
+  terminalcp start probe "ssh user@host"
+  terminalcp run probe "systemctl status nginx" --marker
+
+  # Run in a REPL/SQL CLI, waiting for the prompt to return
+  terminalcp run rails "User.count" --until "irb\\(main\\)"
+
   # Debug with lldb
   terminalcp start debug "lldb ./myapp"
   terminalcp stdin debug "b main\r"
@@ -76,8 +84,12 @@ OPTIONS:
   --mcp                                  Run as MCP server on stdio
   --server                               Run as terminal server daemon
   --since-last                           Only show new output (stream)
-  --with-ansi                            Keep ANSI codes (stream)
+  --with-ansi                            Keep ANSI codes (stream/run)
   --cwd <directory>                      Working directory for start command
+  --marker                               (run) Append a shell exit-code sentinel and wait for it
+  --until <regex>                        (run) Complete when new output matches this regex
+  --idle <ms>                            (run) Complete after this much output silence (default 500)
+  --timeout <ms>                         (run) Hard cap on how long to wait (default 30000)
 
 CLAUDE DESKTOP CONFIGURATION:
   Add to claude_desktop_config.json:
@@ -244,6 +256,36 @@ switch (command) {
 			})
 			.catch((err) => {
 				console.error("Failed to send stdin:", err.message);
+				process.exit(1);
+			});
+		break;
+	}
+
+	case "run": {
+		const runClient = new TerminalClient();
+		// Parse the input using the key parser with :: prefix support
+		const data = parseKeyInput(cmdArgs.data);
+
+		runClient
+			.request({
+				action: "run",
+				id: cmdArgs.sessionId,
+				data,
+				marker: !!flags.marker,
+				until: flags.until as string | undefined,
+				idle: flags.idle ? parseInt(flags.idle as string) : undefined,
+				timeout: flags.timeout ? parseInt(flags.timeout as string) : undefined,
+				strip_ansi: !flags.withAnsi,
+			})
+			.then((output) => {
+				process.stdout.write(output as string);
+				if (output && !(output as string).endsWith("\n")) {
+					process.stdout.write("\n");
+				}
+				process.exit(0);
+			})
+			.catch((err) => {
+				console.error("Failed to run command:", err.message);
 				process.exit(1);
 			});
 		break;

@@ -153,6 +153,35 @@ The following examples show the JSON arguments to pass to the single `terminalcp
 {"action": "stdout", "id": "dev-server", "lines": 50}
 ```
 
+### Send-and-Wait with `run`
+
+`stdin` sends input and returns immediately, leaving you to guess how long to sleep before
+reading the result. `run` instead blocks until the command actually completes and returns only
+that command's new output - one synchronous call, no sleep guessing.
+
+```json
+// Shell command: pass a bare command (no Enter), marker:true appends a hidden exit-code
+// sentinel and waits for it. Returns the output plus "[exit: N]". Best for shells and SSH.
+{"action": "run", "id": "shell", "data": "make -j8", "marker": true}
+
+// REPL / debugger / SQL CLI: include your own Enter and end with a printed sentinel at
+// column 0, then match it anchored. Robust even when the command is silent for a while.
+{"action": "run", "id": "rails", "data": "User.count; puts 'TCPDONE'\r", "until": "^TCPDONE"}
+
+// Fallback when you cannot print a sentinel: complete once the screen is quiet for `idle` ms.
+{"action": "run", "id": "session", "data": "ls -la\r", "idle": 500}
+
+// Bound the wait; on timeout it returns partial output and a note (command keeps running).
+{"action": "run", "id": "shell", "data": "long-task", "marker": true, "timeout": 60000}
+```
+
+Notes:
+- `marker` is shell-only and must NOT be used for commands that end the shell (`exit`, `logout`).
+- Line-editing REPLs (PyREPL, reline, readline) redraw the prompt on every keystroke, so
+  matching the prompt with `until` can fire early; a printed sentinel is reliable.
+- `until` is matched per-line against the rendered screen (the `m` flag is applied, so `^`
+  anchors to a line start).
+
 ### Monitoring Long-Running Processes
 
 ```json
@@ -248,6 +277,12 @@ terminalcp stdout my-app 50  # Last 50 lines
 terminalcp stdin my-app "echo hello" ::Enter
 terminalcp stdin my-app "echo test" ::Left ::Left ::Left "hi " ::Enter  # Navigate with arrows
 terminalcp stdin my-app ::C-c  # Send Ctrl+C
+
+# Send input AND wait for completion, returning the result (no sleep guessing)
+terminalcp run my-app "ls -la" --marker                       # shell: returns output + [exit: N]
+terminalcp run my-app "User.count; puts 'DONE'" ::Enter --until "^DONE"  # REPL: print a sentinel
+terminalcp run my-app "ssh other-host" --idle 1000            # wait for a sub-shell to settle
+# Options: --marker | --until <regex> | --idle <ms> | --timeout <ms> | --with-ansi
 
 # Monitor logs
 terminalcp stream my-app --since-last
@@ -447,6 +482,28 @@ Send text and special keys using escape sequences in a string:
 ```
 
 See "Common Escape Sequences" in Important Usage Notes for a complete reference.
+
+#### Run a command and wait for it to finish (run)
+```json
+{
+  "action": "run",
+  "id": "shell",
+  "data": "make -j8",      // marker mode: a bare shell command, NO trailing Enter
+  "marker": true,          // append a hidden exit-code sentinel and wait for it (shells only)
+  "until": "^DONE",        // OR: complete when a new screen line matches this regex (REPLs)
+  "idle": 500,             // OR: complete after the screen is quiet this long (fallback)
+  "timeout": 30000,        // hard cap in ms (default 30000)
+  "strip_ansi": true       // strip ANSI codes from the returned output (default true)
+}
+```
+**Returns**: only the new output the command produced, with the echoed input and any sentinel
+removed. In `marker` mode a trailing `[exit: N]` is appended. On timeout, returns partial
+output plus a note (the command keeps running - read the rest with `stdout`/`stream`).
+
+Provide exactly one completion strategy: `marker` (shells/SSH, most reliable, gives the exit
+code), `until` (REPLs/debuggers/SQL - end your command with a printed sentinel and match
+`^SENTINEL`), or neither (idle fallback). In `marker` mode pass a bare command and terminalcp
+adds the Enter; in `until`/idle mode include your own Enter (`\r`).
 
 #### Get terminal size
 ```json

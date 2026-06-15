@@ -17,6 +17,17 @@ export interface StdinArgs {
 	data: string;
 }
 
+export interface RunArgs {
+	action: "run";
+	id: string;
+	data: string;
+	until?: string; // Regex; completion when new output matches it
+	idle?: number; // Milliseconds of output silence to treat as complete (default 500)
+	timeout?: number; // Hard cap in milliseconds (default 30000)
+	marker?: boolean; // Shell mode: append an exit-code sentinel and wait for it (most reliable)
+	strip_ansi?: boolean; // Strip ANSI escape codes from returned output (default true)
+}
+
 export interface StdoutArgs {
 	action: "stdout";
 	id: string;
@@ -68,6 +79,7 @@ export type Args =
 	| StartArgs
 	| StopArgs
 	| StdinArgs
+	| RunArgs
 	| StdoutArgs
 	| StreamArgs
 	| TermSizeArgs

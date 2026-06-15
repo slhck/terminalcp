@@ -177,6 +177,15 @@ export class TerminalServer {
 					break;
 				}
 
+				case "run": {
+					const { id, data, until, idle, timeout, marker, strip_ansi } = args || {};
+					if (!id || data === undefined) {
+						throw new Error("Missing required fields: id, data");
+					}
+					result = await this.processManager.run(id, data, { until, idle, timeout, marker, strip_ansi });
+					break;
+				}
+
 				case "stdout": {
 					const { id, lines } = args || {};
 					if (!id) {

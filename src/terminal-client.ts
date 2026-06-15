@@ -12,6 +12,7 @@ import {
 	type KillServerArgs,
 	type ListArgs,
 	type ResizeArgs,
+	type RunArgs,
 	type ServerEvent,
 	type ServerMessage,
 	type ServerResponse,
@@ -237,25 +238,27 @@ export class TerminalClient {
 				? string
 				: T extends StdinArgs
 					? void
-					: T extends StdoutArgs
+					: T extends RunArgs
 						? string
-						: T extends StreamArgs
+						: T extends StdoutArgs
 							? string
-							: T extends TermSizeArgs
+							: T extends StreamArgs
 								? string
-								: T extends ResizeArgs
-									? void
-									: T extends AttachArgs
-										? AttachResult
-										: T extends DetachArgs
-											? string
-											: T extends ListArgs
+								: T extends TermSizeArgs
+									? string
+									: T extends ResizeArgs
+										? void
+										: T extends AttachArgs
+											? AttachResult
+											: T extends DetachArgs
 												? string
-												: T extends KillServerArgs
+												: T extends ListArgs
 													? string
-													: T extends VersionArgs
+													: T extends KillServerArgs
 														? string
-														: unknown
+														: T extends VersionArgs
+															? string
+															: unknown
 	> {
 		if (!this.connected) {
 			// Skip version check for kill-server and version commands
@@ -270,13 +273,17 @@ export class TerminalClient {
 			this.pendingRequests.set(message.id, { resolve, reject });
 			this.socket?.write(`${JSON.stringify(message)}\n`);
 
+			// "run" blocks server-side until the command completes, so its client-side
+			// timeout must outlast the run's own timeout; everything else uses 5s.
+			const requestTimeout = args.action === "run" ? ((args as RunArgs).timeout ?? 30000) + 5000 : 5000;
+
 			// Set a timeout for the request
 			setTimeout(() => {
 				if (this.pendingRequests.has(message.id)) {
 					this.pendingRequests.delete(message.id);
 					reject(new Error("Request timeout"));
 				}
-			}, 5000);
+			}, requestTimeout);
 		});
 	}
 

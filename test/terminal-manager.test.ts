@@ -357,4 +357,73 @@ describe("TerminalManager", () => {
 		const stream = await manager.getStream(id);
 		assert.ok(stream.includes("hello"), "Should still be able to get stream from stopped process");
 	});
+
+	it("run with marker returns command output and exit code", async () => {
+		const id = await manager.start("bash", { name: "run-marker" });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		const out = await manager.run(id, "echo hello-run", { marker: true });
+		assert.ok(out.includes("hello-run"), `Output should contain command result, got: ${out}`);
+		assert.ok(out.includes("[exit: 0]"), `Output should report exit code 0, got: ${out}`);
+		// The injected sentinel must never leak into the returned output.
+		assert.ok(!out.includes("TCPDONE"), `Sentinel should be stripped, got: ${out}`);
+		assert.ok(!out.includes("printf"), `Echoed sentinel command should be stripped, got: ${out}`);
+	});
+
+	it("run with marker captures a non-zero exit code", async () => {
+		const id = await manager.start("bash", { name: "run-marker-fail" });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		// Subshell so the non-zero status is reported without terminating the session.
+		const out = await manager.run(id, "(exit 7)", { marker: true });
+		assert.ok(out.includes("[exit: 7]"), `Output should report exit code 7, got: ${out}`);
+	});
+
+	it("run with marker reports session exit when the command ends the shell", async () => {
+		const id = await manager.start("bash", { name: "run-marker-exit" });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		// `exit` kills the shell before the sentinel can print, so we surface that instead.
+		const out = await manager.run(id, "exit 7", { marker: true });
+		assert.ok(out.includes("session process exited"), `Should report session exit, got: ${out}`);
+	});
+
+	it("run with marker blocks until a slow command finishes", async () => {
+		const id = await manager.start("bash", { name: "run-marker-slow" });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		const start = Date.now();
+		const out = await manager.run(id, "sleep 1 && echo woke", { marker: true });
+		const elapsed = Date.now() - start;
+		assert.ok(out.includes("woke"), `Output should contain result, got: ${out}`);
+		assert.ok(elapsed >= 900, `Should have waited for the sleep, only waited ${elapsed}ms`);
+	});
+
+	it("run with until waits for a printed sentinel in a REPL", async () => {
+		const id = await manager.start("python3 -i", { name: "run-until" });
+		await new Promise((resolve) => setTimeout(resolve, 800));
+
+		const out = await manager.run(id, "print(6*7); print('TCPDONE')\r", { until: "^TCPDONE" });
+		assert.ok(out.includes("42"), `Output should contain the expression result, got: ${out}`);
+		assert.ok(!out.includes("TCPDONE"), `Sentinel line should be excluded, got: ${out}`);
+	});
+
+	it("run with until does not return early on a silent command", async () => {
+		const id = await manager.start("python3 -i", { name: "run-until-silent" });
+		await new Promise((resolve) => setTimeout(resolve, 800));
+		await manager.run(id, "import time\r", { until: "^TCPDONE", timeout: 5000 });
+
+		const start = Date.now();
+		await manager.run(id, "time.sleep(1); print('TCPDONE')\r", { until: "^TCPDONE", timeout: 5000 });
+		const elapsed = Date.now() - start;
+		assert.ok(elapsed >= 900, `Should have waited through the silent sleep, only waited ${elapsed}ms`);
+	});
+
+	it("run reports a timeout without hanging", async () => {
+		const id = await manager.start("bash", { name: "run-timeout" });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+
+		const out = await manager.run(id, "sleep 5", { marker: true, timeout: 800 });
+		assert.ok(out.includes("timed out"), `Should report a timeout, got: ${out}`);
+	});
 });

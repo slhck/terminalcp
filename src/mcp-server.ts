@@ -39,6 +39,28 @@ Examples:
   Get all output ever: {"action": "stream", "id": "proc-123"}  # From process start
   Get new output only: {"action": "stream", "id": "proc-123", "since_last": true}  # Since last stream call
 
+  Run shell cmd, block until done: {"action": "run", "id": "proc-123", "data": "ls -la", "marker": true}
+  Run in a REPL, wait for a printed sentinel: {"action": "run", "id": "rails", "data": "User.count; puts 'TCPDONE'\\r", "until": "^TCPDONE"}
+
+PREFER "run" over stdin+stdout when you expect a command to finish: it sends the input and
+returns ONLY that command's new output the moment it completes - no guessing a sleep, no
+extra stdout call. This is the fastest, most token-efficient path for interactive sessions.
+  - Shell commands (incl. over SSH): pass a bare command (NO trailing Enter) and set
+    "marker": true. terminalcp appends a hidden exit-code sentinel, waits for it, strips it,
+    and appends "[exit: N]". Most reliable. (Don't use marker for commands that end the shell,
+    like "exit" or "logout" - the sentinel can't run; you'll get a session-exited note instead.)
+  - REPLs / debuggers / SQL CLIs (rails console, psql, lldb, python): include your own Enter
+    (\\r) and END your command with a statement that prints a unique sentinel at column 0,
+    then set "until": "^SENTINEL". This is the REPL analog of marker and is robust even when
+    the command is silent for a while (e.g. a slow query). Matching the REPL's prompt also
+    works but ONLY for commands that print output promptly - it fires early on silent ones.
+  - Fallback when you can't print a sentinel: omit until/marker; "run" returns once the screen
+    goes quiet for "idle" ms (default 500). Unreliable for commands that pause without output.
+  - Bound the wait with "timeout" (ms, default 30000). On timeout it returns what it has and
+    says so; the command keeps running - read more with stdout/stream.
+Use plain "stdin" only to send keystrokes you do NOT want to wait on (Ctrl+C, navigation,
+answering a prompt), and "stream"/"stdout" for long-running processes you monitor over time.
+
 Output modes:
   stdout: Terminal emulator output - returns the rendered screen as user would see it.
           Limited to 10K lines scrollback. Best for: interactive tools, TUIs, REPLs, debuggers.
@@ -78,7 +100,17 @@ Note: Commands run via bash -c. Use absolute paths, not aliases.`,
 							properties: {
 								action: {
 									type: "string",
-									enum: ["start", "stop", "stdout", "stdin", "list", "stream", "term-size", "kill-server"],
+									enum: [
+										"start",
+										"stop",
+										"stdout",
+										"stdin",
+										"run",
+										"list",
+										"stream",
+										"term-size",
+										"kill-server",
+									],
 									description: "The action to perform",
 								},
 								command: {
@@ -101,7 +133,27 @@ Note: Commands run via bash -c. Use absolute paths, not aliases.`,
 								data: {
 									type: "string",
 									description:
-										"String to send to stdin with escape sequences (e.g., '\\r' for Enter, '\\u001b[A' for Up arrow)",
+										"String to send for 'stdin'/'run' with escape sequences (e.g., '\\r' for Enter, '\\u001b[A' for Up arrow). For 'run' with marker:true, pass a bare shell command WITHOUT a trailing Enter.",
+								},
+								until: {
+									type: "string",
+									description:
+										"Regex for 'run' action, matched per-line against the rendered screen (the `m` flag is applied, so `^` anchors to a line start). Best practice: end your REPL command with a printed sentinel and match it anchored, e.g. \"^TCPDONE\".",
+								},
+								idle: {
+									type: "number",
+									description:
+										"Milliseconds of output silence that count as complete for 'run' (default 500). Used when neither marker nor until is set.",
+								},
+								timeout: {
+									type: "number",
+									description:
+										"Hard cap in milliseconds for 'run' (default 30000). On timeout, returns partial output and a note; the command keeps running.",
+								},
+								marker: {
+									type: "boolean",
+									description:
+										"For 'run' on a shell session: append a hidden exit-code sentinel and wait for it. Most reliable completion signal; also returns the exit code.",
 								},
 								lines: {
 									type: "number",

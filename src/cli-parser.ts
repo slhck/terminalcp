@@ -40,6 +40,8 @@ export function parseArgs(args: string[]): ParseResult {
 			return parseStreamCommand(rest);
 		case "stdin":
 			return parseStdinCommand(rest);
+		case "run":
+			return parseRunCommand(rest);
 		case "resize":
 			return parseResizeCommand(rest);
 		case "term-size":
@@ -191,6 +193,49 @@ function parseStdinCommand(args: string[]): ParseResult {
 			data: args.slice(1),
 		},
 		flags: {},
+	};
+}
+
+function parseRunCommand(args: string[]): ParseResult {
+	if (args.length < 2) {
+		return {
+			error: "run command requires session-id and data",
+			usage: "terminalcp run <id> <text...> [--marker] [--until <regex>] [--idle <ms>] [--timeout <ms>] [--with-ansi]",
+		};
+	}
+
+	const sessionId = args[0];
+	const data: string[] = [];
+	const flags: Record<string, string | boolean> = {};
+
+	for (let i = 1; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--marker") {
+			flags.marker = true;
+		} else if (arg === "--with-ansi") {
+			flags.withAnsi = true;
+		} else if (arg === "--until") {
+			flags.until = args[++i];
+		} else if (arg === "--idle") {
+			flags.idle = args[++i];
+		} else if (arg === "--timeout") {
+			flags.timeout = args[++i];
+		} else {
+			data.push(arg);
+		}
+	}
+
+	if (data.length === 0) {
+		return {
+			error: "run command requires data to send",
+			usage: "terminalcp run <id> <text...> [--marker] [--until <regex>] [--idle <ms>] [--timeout <ms>] [--with-ansi]",
+		};
+	}
+
+	return {
+		command: "run",
+		args: { sessionId, data },
+		flags,
 	};
 }
 
