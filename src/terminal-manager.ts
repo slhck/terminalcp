@@ -297,18 +297,29 @@ export class TerminalManager {
 		deadline: number,
 		timeoutNote: string,
 	): Promise<string> {
-		// The echoed command overwrites the previous prompt line, and real output appends
-		// below it - so scanning lines from startLine onward naturally skips the echo.
+		// The echoed command usually overwrites the previous prompt line, so scanning from
+		// startLine onward skips it. But a prior run() returns the instant it matches its
+		// sentinel - before the REPL has printed any trailing result and drawn the fresh
+		// prompt - so `before` can end on a result line with the next prompt not yet rendered.
+		// The echo then lands exactly at startLine; strip it below as a backstop.
 		const before = (await this.getOutput(id)).split("\n");
 		const startLine = before.length;
 		await this.sendInput(id, data);
 
+		const echoedFirstLine = data
+			.replace(/[\r\n]+$/, "")
+			.split(/[\r\n]/)[0]
+			.trim();
 		// `m` flag makes ^/$ anchor per line, so a sentinel like `^TCPDONE` matches the
 		// printed output line but not the echoed input (where it sits inside quotes).
 		const untilRe = until ? new RegExp(until, "m") : undefined;
 		const newLines = (lines: string[]) => lines.slice(startLine);
 		const finish = (lines: string[], end: number | undefined, trailer: string): string => {
 			const slice = end !== undefined ? lines.slice(startLine, end) : newLines(lines);
+			// Drop a leading echoed-input line (prompt + command) that slipped past startLine.
+			while (echoedFirstLine.length > 0 && slice.length > 0 && slice[0].includes(echoedFirstLine)) {
+				slice.shift();
+			}
 			const body = slice
 				.join("\n")
 				.replace(/^[\r\n]+/, "")
